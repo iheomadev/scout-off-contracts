@@ -129,7 +129,7 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .get(&DataKey::HistoryEntry(player_id, index))
-            .ok_or(ProgressError::PlayerNotFound)
+            .ok_or(ProgressError::HistoryEntryNotFound)
     }
 
     pub fn health(env: Env) -> bool {
@@ -278,5 +278,21 @@ mod tests {
         // Clear mocks — old admin auth no longer stored, so pause must fail
         env.mock_auths(&[]);
         client.pause_contract();
+    }
+
+    #[test]
+    fn test_get_history_entry_returns_history_entry_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let player_id = 42u64;
+        // No level advances — index 1 does not exist
+        let result = client.try_get_history_entry(&player_id, &1u32);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::HistoryEntryNotFound)),
+            "expected HistoryEntryNotFound for out-of-range index"
+        );
     }
 }

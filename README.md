@@ -533,6 +533,7 @@ Frontend and backend dependencies live in their respective repos (`scoutchain-fr
 | 9 | ContractPaused | Contract is paused | Emergency circuit breaker active | Monitor official channels; wait for admin to unpause |
 | 10 | Unauthorized | Caller is not authorized | Wrong account for admin operation | Confirm you are using the correct Stellar account |
 | 11 | Overflow | Arithmetic overflow in fee calculation | Extremely large XLM amount | Use amounts within safe i128 range |
+| 12 | HistoryEntryNotFound | History index out of range for player | Querying an index beyond the player's level change count | Check `get_history_count` before fetching a specific entry |
 
 ## Events
 
