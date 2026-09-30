@@ -5,6 +5,13 @@ mod types;
 use errors::ProgressError;
 use types::{DataKey, ProgressEntry, ProgressLevel};
 
+/// Minimum remaining TTL (in ledgers) before the PlayerLevel entry is eligible
+/// for extension. ~30 days at 5 s per ledger.
+const PERSISTENT_TTL_MIN: u32 = 518_400;
+/// Target TTL (in ledgers) to extend to after writing PlayerLevel — ~60 days at
+/// 5 s per ledger.
+const PERSISTENT_TTL_MAX: u32 = 1_036_800;
+
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
 #[contract]
@@ -101,6 +108,13 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .set(&DataKey::PlayerLevel(player_id), &new_level);
+        // Extend TTL so a newly written level record lives at least
+        // PERSISTENT_TTL_MIN ledgers (≈ 30 days) regardless of query frequency.
+        env.storage().persistent().extend_ttl(
+            &DataKey::PlayerLevel(player_id),
+            PERSISTENT_TTL_MIN,
+            PERSISTENT_TTL_MAX,
+        );
 
         events::progress_updated(&env, player_id, &new_level, &caller);
         Ok(new_level)
@@ -129,7 +143,7 @@ impl ProgressContract {
         env.storage()
             .persistent()
             .get(&DataKey::HistoryEntry(player_id, index))
-            .ok_or(ProgressError::PlayerNotFound)
+            .ok_or(ProgressError::HistoryEntryNotFound)
     }
 
     pub fn health(env: Env) -> bool {
@@ -278,5 +292,52 @@ mod tests {
         // Clear mocks — old admin auth no longer stored, so pause must fail
         env.mock_auths(&[]);
         client.pause_contract();
+    }
+
+    #[test]
+    fn test_get_history_entry_returns_history_entry_not_found() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let player_id = 42u64;
+        // No level advances — index 1 does not exist
+        let result = client.try_get_history_entry(&player_id, &1u32);
+        assert_eq!(
+            result,
+            Err(Ok(ProgressError::HistoryEntryNotFound)),
+            "expected HistoryEntryNotFound for out-of-range index"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #1439 — advance_level must extend the TTL of PlayerLevel after write
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_advance_level_extends_player_level_ttl() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, ProgressContract);
+        let client = ProgressContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let validator = Address::generate(&env);
+        let player_id = 7u64;
+        client.advance_level(&validator, &player_id, &1u32);
+
+        // Inspect the TTL of the key written by advance_level from inside the
+        // contract's own storage context.
+        env.as_contract(&contract_id, || {
+            let ttl = env
+                .storage()
+                .persistent()
+                .get_ttl(&DataKey::PlayerLevel(player_id));
+            assert!(
+                ttl >= PERSISTENT_TTL_MIN,
+                "TTL {ttl} is below PERSISTENT_TTL_MIN {PERSISTENT_TTL_MIN}"
+            );
+        });
     }
 }
